@@ -4,6 +4,7 @@ pragma solidity >=0.8.0 <0.9.0;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {console} from "forge-std/Test.sol";
 
 /**
  * @title Rebase Token.
@@ -12,13 +13,13 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
  * @notice The interest rate in smart contract can only decrease.
  * @notice Each users will have their own interest rate that is global interest rate at the time of depositing.
  */
-contract RebaseToken is ERC20,Ownable,AccessControl {
+contract RebaseToken is ERC20, Ownable, AccessControl {
     error RebaseToken__InterestRateShouldOnlyDecrease(uint256 oldInterestRate, uint256 newInterestRate);
 
     uint256 private constant PRECISION_FACTOR = 1e18;
     bytes32 private constant MINT_AND_BURN_ROLE = keccak256("MINT_AND_BURN_ROLE");
 
-    uint256 private s_interestRate = 5e10; // this interest rate is per second --> 5 x 10^-8 --> 5 x 10 ^-6 %
+    uint256 private s_interestRate = (5 * PRECISION_FACTOR) / 1e8; // this interest rate is per second 5*10^10--> 5 x 10^-8 --> 5 x 10 ^-6 %
     mapping(address user => uint256 interestRate) private s_userInterestRate;
     mapping(address user => uint256 lastTimestamp) private s_userLastUpdatedTimestamp;
 
@@ -26,9 +27,8 @@ contract RebaseToken is ERC20,Ownable,AccessControl {
 
     constructor() ERC20("RebaseToken", "RBT") Ownable(msg.sender) {}
 
-
-    function grantMintAndBurnRole (address _account) external onlyOwner{
-        _grantRole(MINT_AND_BURN_ROLE,_account);
+    function grantMintAndBurnRole(address _account) external onlyOwner {
+        _grantRole(MINT_AND_BURN_ROLE, _account);
     }
 
     /**
@@ -37,7 +37,7 @@ contract RebaseToken is ERC20,Ownable,AccessControl {
      * @dev The interest rate could only decrease.
      */
     function setInterestRate(uint256 _interestRate) external onlyOwner {
-        if (_interestRate < s_interestRate) {
+        if (_interestRate > s_interestRate) {
             revert RebaseToken__InterestRateShouldOnlyDecrease(s_interestRate, _interestRate);
         }
         s_interestRate = _interestRate;
@@ -46,15 +46,18 @@ contract RebaseToken is ERC20,Ownable,AccessControl {
 
     function mint(address _to, uint256 _amount) external onlyRole(MINT_AND_BURN_ROLE) {
         _mintAccruedInterest(_to);
-        s_userInterestRate[msg.sender] = s_interestRate;
+        s_userInterestRate[_to] = s_interestRate;
         _mint(_to, _amount);
     }
 
     function burn(address _from, uint256 _amount) external onlyRole(MINT_AND_BURN_ROLE) {
-        if (_amount == type(uint256).max) {
-            // There could be delay in block execution for redeem all of their balance
-            _amount = balanceOf(_from);
-        }
+        /**
+         * @notice We need to implement this in the redeem function itself.
+         *     if (_amount == type(uint256).max) {
+         *         // There could be delay in block execution for redeem all of their balance
+         *         _amount = balanceOf(_from);
+         *     }
+         */
         _mintAccruedInterest(_from);
         _burn(_from, _amount);
     }
@@ -85,22 +88,22 @@ contract RebaseToken is ERC20,Ownable,AccessControl {
             _amount = balanceOf(msg.sender); // the user want to send their whole balance
         }
         if (balanceOf(_recipient) == 0) {
-            s_userInterestRate[_recipient] = s_userInterestRate[msg.sender];
+            s_userInterestRate[_recipient] = s_userInterestRate[msg.sender]; // set the reciever interest same as of the sender . It should not have the contract interest rate at the moment.
         }
 
         return super.transfer(_recipient, _amount);
     }
 
-    function transferFrom (address _sender,address _recipient, uint256 _amount) public override returns(bool){
+    function transferFrom(address _sender, address _recipient, uint256 _amount) public override returns (bool) {
         _mintAccruedInterest(_sender);
         _mintAccruedInterest(_recipient);
-        if(_amount == type(uint256).max){
+        if (_amount == type(uint256).max) {
             _amount = balanceOf(_sender);
         }
-        if(balanceOf(_recipient) == 0){
+        if (balanceOf(_recipient) == 0) {
             s_userInterestRate[_recipient] = s_userInterestRate[_sender];
         }
-        return super.transferFrom(_sender,_recipient,_amount);
+        return super.transferFrom(_sender, _recipient, _amount);
     }
 
     /**
@@ -114,6 +117,7 @@ contract RebaseToken is ERC20,Ownable,AccessControl {
         uint256 actualBalance = balanceOf(_user);
         // 3. Calculate the number of tokens that need to be minted to users. (2.) - (1.)
         uint256 balanceIncrease = actualBalance - previousPrincipleBalance;
+        console.log("balanceIncrease", balanceIncrease);
         // set users last updated timestamp
         // CEI -> Checks, Effect and Interactions
         s_userLastUpdatedTimestamp[_user] = block.timestamp; // [ Effect ]
@@ -139,8 +143,10 @@ contract RebaseToken is ERC20,Ownable,AccessControl {
         acumulatedInterest = (1 * PRECISION_FACTOR + s_userInterestRate[_user] * timeElapsed); // converting to same decimal factor --> 1e18
     }
 
-    /**@notice  Get the principle balance of user. This is the number of token that have been minted to a user, not including the accrued interest  */
-    function principleBalanceOf(address _user) external view  returns (uint256) {
+    /**
+     * @notice  Get the principle balance of user. This is the number of token that have been minted to a user, not including the accrued interest
+     */
+    function principleBalanceOf(address _user) external view returns (uint256) {
         return super.balanceOf(_user);
     }
 
@@ -151,8 +157,11 @@ contract RebaseToken is ERC20,Ownable,AccessControl {
     /**
      * @notice Get interest rate for contract. Any future depositor will recieve this interest.
      */
-    function getInterestRate() external view returns(uint256){
+    function getInterestRate() external view returns (uint256) {
         return s_interestRate;
     }
 
+    function getMintAndBurnRole() external pure returns (bytes32){
+        return MINT_AND_BURN_ROLE;
+    }
 }
