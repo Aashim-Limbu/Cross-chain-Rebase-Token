@@ -161,7 +161,7 @@ contract RebaseToken is ERC20, Ownable, AccessControl {
         return s_interestRate;
     }
 
-    function getMintAndBurnRole() external pure returns (bytes32){
+    function getMintAndBurnRole() external pure returns (bytes32) {
         return MINT_AND_BURN_ROLE;
     }
 }
