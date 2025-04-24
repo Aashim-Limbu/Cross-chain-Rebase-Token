@@ -136,12 +136,13 @@ contract RebaseTokenTest is Test {
 
     function testCannotCallMintAndBurn() public {
         vm.startPrank(user);
+        uint256 userInterestRate = rebaseToken.getUserInterestRate(user);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IAccessControl.AccessControlUnauthorizedAccount.selector, user, rebaseToken.getMintAndBurnRole()
             )
         );
-        rebaseToken.mint(user, 100);
+        rebaseToken.mint(user, 100, userInterestRate);
         vm.stopPrank();
         console.logBytes32(rebaseToken.getMintAndBurnRole());
     }

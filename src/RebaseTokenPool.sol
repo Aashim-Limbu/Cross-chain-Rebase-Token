@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.0 <0.9.0;
 
-import {TokenPool, IERC20} from "@chainlink/contracts/src/v0.8/ccip/pools/TokenPool.sol";
+import {TokenPool, IERC20, RateLimiter} from "@chainlink/contracts/src/v0.8/ccip/pools/TokenPool.sol";
 import {Pool} from "@chainlink/contracts/src/v0.8/ccip/libraries/Pool.sol";
 import {IPoolV1} from "@chainlink/contracts/src/v0.8/ccip/interfaces/IPool.sol";
 import {IRebaseToken} from "src/interfaces/IRebaseToken.sol";
@@ -38,10 +38,10 @@ contract RebaseTokenPool is TokenPool {
         _validateLockOrBurn(lockOrBurnIn);
 
         // Decode receiver address from ABI-encoded bytes
-        address receiver = abi.decode(lockOrBurnIn.receiver, (address));
+        address originalSender = lockOrBurnIn.originalSender;
 
         // Get the receiver's custom interest rate from the rebase token
-        uint256 userInterestRate = IRebaseToken(address(i_token)).getUserInterestRate(receiver);
+        uint256 userInterestRate = IRebaseToken(address(i_token)).getUserInterestRate(originalSender);
 
         /**
          * @dev Burns tokens from this contract's balance
@@ -60,14 +60,25 @@ contract RebaseTokenPool is TokenPool {
     }
 
     /**
-     * @notice Handles releasing or minting tokens when receiving from another chain
-     * @dev To be implemented with custom logic for rebase tokens
+     * @notice Releases/mints tokens when receiving from another chain
+     * @param releaseOrMintIn Contains transfer details {
+     *   address receiver,
+     *   uint256 amount,
+     *   bytes sourcePoolData (encoded interest rate)
+     * }
+     * @return releaseOrMintOut Output structure {
+     *   uint256 destinationAmount
+     * }
      */
     function releaseOrMint(Pool.ReleaseOrMintInV1 calldata releaseOrMintIn)
         external
         returns (Pool.ReleaseOrMintOutV1 memory)
     {
         _validateReleaseOrMint(releaseOrMintIn);
+        // Decode interest rate from source chain.
         uint256 userInterestRate = abi.decode(releaseOrMintIn.sourcePoolData, (uint256));
+        //  // Mint tokens to receiver with their custom interest rate
+        IRebaseToken(address(i_token)).mint(releaseOrMintIn.receiver, releaseOrMintIn.amount, userInterestRate);
+        return Pool.ReleaseOrMintOutV1({destinationAmount: releaseOrMintIn.amount});
     }
 }
