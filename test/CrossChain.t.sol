@@ -10,9 +10,10 @@ import {RegistryModuleOwnerCustom} from
     "@chainlink/contracts-ccip/src/v0.8/ccip/tokenAdminRegistry/RegistryModuleOwnerCustom.sol";
 import {Vault} from "../src/Vault.sol";
 import {TokenAdminRegistry} from "@chainlink/contracts-ccip/src/v0.8/ccip/tokenAdminRegistry/TokenAdminRegistry.sol";
+import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
+import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
 
 contract CrossChainTest is Test {
-    address owner = makeAddr("OWNER");
     uint256 ethSepoliaFork;
     uint256 optimismSepoliaFork;
     string ETHEREUM_SEPOLIA_RPC_URL = vm.envString("SEPOLIA_RPC_URL");
@@ -25,6 +26,10 @@ contract CrossChainTest is Test {
     RebaseTokenPool optimismSepoliaPool;
     Register.NetworkDetails ethSepoliaNetworkDetails;
     Register.NetworkDetails optimismSepoliaNetworkDetails;
+
+    address owner = makeAddr("OWNER");
+    address user = makeAddr("USER");
+    uint256 constant SEND_VALUE = 1e5;
 
     function setUp() public {
         /**
@@ -64,20 +69,12 @@ contract CrossChainTest is Test {
         );
         // Accepting Admin Role
         TokenAdminRegistry(ethSepoliaNetworkDetails.tokenAdminRegistryAddress).acceptAdminRole(address(ethSepoliaToken));
-        vm.stopPrank();
-
         // 5. Linking Tokens to Pools.
         TokenAdminRegistry(ethSepoliaNetworkDetails.tokenAdminRegistryAddress).setPool(
             address(ethSepoliaToken), address(ethSepoliaPool)
         );
-        // 6. Configuring Tokens Pools.
-        configureTokenPool(
-            ethSepoliaFork,
-            TokenPool(address(ethSepoliaPool)),
-            optimismSepoliaNetworkDetails.chainSelector,
-            address(optimismSepoliaPool),
-            address(optimismSepoliaToken)
-        );
+        vm.stopPrank();
+
         // Deploy and configure on optimism Sepolia.
         vm.selectFork(optimismSepoliaFork);
         optimismSepoliaNetworkDetails = ccipLocalSimulatorFork.getNetworkDetails(block.chainid);
@@ -100,6 +97,16 @@ contract CrossChainTest is Test {
         TokenAdminRegistry(optimismSepoliaNetworkDetails.tokenAdminRegistryAddress).setPool(
             address(optimismSepoliaToken), address(optimismSepoliaPool)
         );
+        vm.stopPrank();
+
+        // 6. Configuring Tokens Pools.
+        configureTokenPool(
+            ethSepoliaFork,
+            TokenPool(address(ethSepoliaPool)),
+            optimismSepoliaNetworkDetails.chainSelector,
+            address(optimismSepoliaPool),
+            address(optimismSepoliaToken)
+        );
         configureTokenPool(
             optimismSepoliaFork,
             TokenPool(address(optimismSepoliaPool)),
@@ -107,7 +114,6 @@ contract CrossChainTest is Test {
             address(ethSepoliaPool),
             address(ethSepoliaToken)
         );
-        vm.stopPrank();
     }
 
     function configureTokenPool(
@@ -148,5 +154,54 @@ contract CrossChainTest is Test {
         Register.NetworkDetails memory remoteNetworkDetails,
         RebaseToken localToken,
         RebaseToken remoteToken
-    ) public {}
+    ) public {
+        vm.selectFork(localFork);
+        Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](1);
+        tokenAmounts[0] = Client.EVMTokenAmount({token: address(localToken), amount: amountToBridge});
+        Client.EVM2AnyMessage memory message = Client.EVM2AnyMessage({
+            receiver: abi.encode(user),
+            data: "",
+            tokenAmounts: tokenAmounts,
+            feeToken: localNetworkDetails.linkAddress,
+            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV2({gasLimit: 500_000, allowOutOfOrderExecution: false}))
+        });
+        uint256 fee =
+            IRouterClient(localNetworkDetails.routerAddress).getFee(remoteNetworkDetails.chainSelector, message);
+        ccipLocalSimulatorFork.requestLinkFromFaucet(user, fee);
+        vm.startPrank(user);
+        IERC20(localNetworkDetails.linkAddress).approve(localNetworkDetails.routerAddress, fee);
+        IERC20(address(localToken)).approve(localNetworkDetails.routerAddress, amountToBridge);
+        uint256 localBalanceBefore = localToken.balanceOf(user);
+        IRouterClient(localNetworkDetails.routerAddress).ccipSend(remoteNetworkDetails.chainSelector, message);
+        uint256 localBalanceAfter = localToken.balanceOf(user);
+        vm.stopPrank();
+        assertEq(localBalanceAfter, localBalanceBefore - amountToBridge);
+        uint256 localUserInterestRate = localToken.getUserInterestRate(user);
+
+        vm.selectFork(remoteFork);
+        vm.warp(block.timestamp + 20 minutes);
+        uint256 remoteBalanceBefore = remoteToken.balanceOf(user);
+        ccipLocalSimulatorFork.switchChainAndRouteMessage(remoteFork);
+        uint256 remoteBalanceAfter = remoteToken.balanceOf(user);
+        uint256 remoteUserInterestRate = remoteToken.getUserInterestRate(user);
+        assertEq(remoteBalanceAfter, remoteBalanceBefore + amountToBridge);
+        assertEq(localUserInterestRate, remoteUserInterestRate);
+    }
+
+    function testBridgeAllTokens() public {
+        vm.selectFork(ethSepoliaFork);
+        vm.deal(user, SEND_VALUE);
+        vm.prank(user);
+        Vault(payable(address(vault))).deposit{value: SEND_VALUE}();
+        assertEq(ethSepoliaToken.balanceOf(user), SEND_VALUE);
+        bridgeTokens(
+            SEND_VALUE,
+            ethSepoliaFork,
+            optimismSepoliaFork,
+            ethSepoliaNetworkDetails,
+            optimismSepoliaNetworkDetails,
+            ethSepoliaToken,
+            optimismSepoliaToken
+        );
+    }
 }
