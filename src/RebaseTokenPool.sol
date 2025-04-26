@@ -37,7 +37,7 @@ contract RebaseTokenPool is TokenPool {
     {
         _validateLockOrBurn(lockOrBurnIn);
 
-        // Decode receiver address from ABI-encoded bytes
+        //  Getting Reciever from lockOrBurnIn
         address originalSender = lockOrBurnIn.originalSender;
 
         // Get the receiver's custom interest rate from the rebase token

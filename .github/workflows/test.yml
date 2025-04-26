@@ -33,6 +33,11 @@ jobs:
         run: |
           forge fmt --check
         id: fmt
+      - name: Set up .env
+        run: |
+          echo "SEPOLIA_RPC_URL=${{secrets.SEPOLIA_RPC_URL}}" >>.env
+          echo "OPTIMISM_RPC_URL=${{secrets.OPTIMISM_RPC_URL}}" >>.env
+          cat .env
 
       - name: Run Forge build
         run: |
