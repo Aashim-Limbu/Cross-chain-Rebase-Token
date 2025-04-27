@@ -25,8 +25,22 @@ contract TokenAndPoolDeployer is Script {
             address(networkDetails.rmnProxyAddress),
             networkDetails.routerAddress
         );
-        // 3.Claiming Mint and Burn Roles
-        token.grantMintAndBurnRole(address(pool));
+
+        vm.stopBroadcast();
+    }
+}
+
+contract setPermissions is Script {
+    function grantRole(address token, address pool) public {
+        vm.startBroadcast();
+        IRebaseToken(token).grantMintAndBurnRole(address(pool));
+        vm.stopBroadcast();
+    }
+
+    function setAdmin(address token, address pool) public {
+        CCIPLocalSimulatorFork ccipLocalSimulatorFork = new CCIPLocalSimulatorFork();
+        Register.NetworkDetails memory networkDetails = ccipLocalSimulatorFork.getNetworkDetails(block.chainid);
+        vm.startBroadcast();
         // 4. Claiming and Accepting Admin Role (2 steps)
         // Claiming Admin Role
         RegistryModuleOwnerCustom(networkDetails.registryModuleOwnerCustomAddress).registerAdminViaOwner(address(token));
