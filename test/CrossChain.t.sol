@@ -231,5 +231,17 @@ contract CrossChainTest is Test {
             ethSepoliaToken,
             optimismSepoliaToken
         );
+        vm.selectFork(optimismSepoliaFork);
+        vm.warp(block.timestamp + 20 minutes);
+        uint256 balanceOfUser = optimismSepoliaToken.balanceOf(user);
+        bridgeTokens(
+            balanceOfUser,
+            optimismSepoliaFork,
+            ethSepoliaFork,
+            optimismSepoliaNetworkDetails,
+            ethSepoliaNetworkDetails,
+            optimismSepoliaToken,
+            ethSepoliaToken
+        );
     }
 }
